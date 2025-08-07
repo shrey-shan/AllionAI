@@ -4,4 +4,6 @@ allion\Scripts\activate
 
 pip install -r requirements.txt
 
-run allion voice agent
+python <voice_agent_file.py> download-files
+
+python <voice_agent_file.py> console
