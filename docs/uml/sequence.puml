@@ -1,0 +1,31 @@
+@startuml
+title Allion AI - Job Card Preparation Flow
+
+actor Customer
+participant LiveKit
+participant STT as "STT (Sarvam/Bhashini)"
+participant N8N
+participant VLM
+participant LLM as "Agentic LLM"
+participant BoschDB
+participant InventoryAPI
+participant TTS as "TTS (Sarvam/Bhashini)"
+participant JobCardAPI
+
+Customer -> LiveKit : Speak Issue / Share Images
+LiveKit -> STT : Audio Stream
+STT -> N8N : Transcribed Text
+LiveKit -> VLM : Analyze Image (if provided)
+VLM -> N8N : Image Insights
+N8N -> LLM : Send Text + Image Insights
+LLM -> BoschDB : Query Codes / Fix Steps
+LLM -> InventoryAPI : Check Part Availability
+alt Part Not Found
+    InventoryAPI --> LLM : Not Found
+    LLM -> InventoryAPI : Trigger Purchase Request
+end
+LLM -> N8N : Return Diagnosis + Actions
+N8N -> JobCardAPI : Create/Update Job Card
+N8N -> TTS : Convert Summary to Speech
+TTS -> LiveKit : Play Audio to Customer
+@enduml
