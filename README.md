@@ -78,5 +78,6 @@ python src/voice_agent.py dev
 ```
 - Starts the LiveKit agent worker and joins the specified room.  
 - Go to the frontend web app:  
-  👉 [https://agent-starter-react-sigma.vercel.app/](https://agent-starter-react-sigma.vercel.app/)  
+  👉Default : [https://agent-starter-react-sigma.vercel.app/](https://agent-starter-react-sigma.vercel.app/)
+  👉Custom(with bosch logo)  : [https://agent-starter-react-custom.vercel.app/](http://agent-starter-react-custom.vercel.app/)
 - Enter the same room name as in `.env` (`LIVEKIT_ROOM`) to interact with your agent via browser.
