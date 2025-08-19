@@ -2,7 +2,7 @@
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
-import os
+import os, json
 
 base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
 load_dotenv(os.path.join(base_dir, ".env"))
@@ -17,36 +17,62 @@ class Assistant(Agent):
             "Could you share details about the vehicle issue or error code?"
         ))
 
-async def entrypoint(ctx: agents.JobContext, config_module):
+def _pick_config_from_lang(code: str):
+    c = (code or "en").lower()
+    if c == "hi":
+        import configs.hindi_config as cfg; return cfg
+    if c == "kn":
+        import configs.kannada_config as cfg; return cfg
+    import configs.english_config as cfg; return cfg
+
+async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
-    session = AgentSession(**config_module.get_config())
+
+    # Default comes from env for console mode; FE metadata overrides in dev mode
+    lang = os.getenv("AGENT_LANG", "en")
+
+    # Try to read participant metadata quickly (frontend sets it after connect)
+    try:
+        participant = await ctx.wait_for_participant(timeout=3.0)
+        if participant and participant.metadata:
+            md = json.loads(participant.metadata)
+            lang = (md.get("language") or lang).lower()
+    except Exception:
+        pass  # stay with env/default
+
+    cfg = _pick_config_from_lang(lang)
+
+    session = AgentSession(**cfg.get_config())
     await session.start(
         room=ctx.room,
         agent=Assistant(),
         room_input_options=RoomInputOptions(video_enabled=True),
     )
-    await session.generate_reply(instructions="Greet the user and offer your assistance.")
 
-def run_agent(config_module):
-    # Prefer single process on Windows to avoid IPC crashes
-    # Try the explicit option if available; otherwise fall back to env toggle.
+    greetings = {
+        "en": "Hi! I’m your automotive assistant. How can I help today?",
+        "hi": "नमस्ते! मैं आपका ऑटोमोटिव सहायक हूँ। आज मैं आपकी कैसे मदद कर सकता/सकती हूँ?",
+        "kn": "ನಮಸ್ಕಾರ! ನಾನು ನಿಮ್ಮ ವಾಹನ ಸಹಾಯಕ. ನಾನು ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?",
+    }
+    await session.generate_reply(instructions=greetings.get(lang, greetings["en"]))
+
+def run_agent():
+    # Single-process avoids Windows IPC issues
     try:
         agents.cli.run_app(
             agents.WorkerOptions(
-                entrypoint_fnc=lambda ctx: entrypoint(ctx, config_module),
+                entrypoint_fnc=entrypoint,
                 initialize_process_timeout=60.0,
                 shutdown_process_timeout=60.0,
                 job_memory_warn_mb=15000,
-                # 👇 key line: keep everything in one process
                 use_separate_process=False,
             )
         )
     except TypeError:
-        # Older versions may not have `use_separate_process`. Use env flag instead.
         os.environ["LIVEKIT_AGENTS_DISABLE_SEPARATE_PROCESS"] = "1"
         agents.cli.run_app(
             agents.WorkerOptions(
-                entrypoint_fnc=lambda ctx: entrypoint(ctx, config_module),
+                entrypoint_fnc=entrypoint,
                 initialize_process_timeout=60.0,
                 shutdown_process_timeout=60.0,
                 job_memory_warn_mb=15000,
