@@ -1,4 +1,11 @@
 import os
+import sys, asyncio
+
+# 🔧 Fix for Windows asyncio + LiveKit IPC crashes
+if sys.platform.startswith("win"):
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+
 from livekit.plugins import openai, cartesia, deepgram, silero
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
@@ -6,8 +13,9 @@ def get_config():
     return dict(
         stt=deepgram.STT(model="nova-3", language="multi"),
         llm=openai.LLM(
-            model="gpt-4o-mini",
-            base_url=os.getenv("OPENAI_API_BASE"),
+             model="openai/gpt-4o-mini",   # 👈 note the "openai/" prefix (OpenRouter convention)
+            base_url="https://openrouter.ai/api/v1",  # 👈 route through OpenRouter
+            api_key=os.getenv("OPENAI_API_KEY"), 
         ),
         tts=cartesia.TTS(
             model="sonic-2",

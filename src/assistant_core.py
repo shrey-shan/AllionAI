@@ -1,8 +1,11 @@
+# assistant_core.py
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
+import os
 
-load_dotenv()
+base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
+load_dotenv(os.path.join(base_dir, ".env"))
 
 class Assistant(Agent):
     def __init__(self) -> None:
@@ -25,11 +28,27 @@ async def entrypoint(ctx: agents.JobContext, config_module):
     await session.generate_reply(instructions="Greet the user and offer your assistance.")
 
 def run_agent(config_module):
-    agents.cli.run_app(
-        agents.WorkerOptions(
-            entrypoint_fnc=lambda ctx: entrypoint(ctx, config_module),
-            initialize_process_timeout=60.0,
-            shutdown_process_timeout=60.0,
-            job_memory_warn_mb=15000,
+    # Prefer single process on Windows to avoid IPC crashes
+    # Try the explicit option if available; otherwise fall back to env toggle.
+    try:
+        agents.cli.run_app(
+            agents.WorkerOptions(
+                entrypoint_fnc=lambda ctx: entrypoint(ctx, config_module),
+                initialize_process_timeout=60.0,
+                shutdown_process_timeout=60.0,
+                job_memory_warn_mb=15000,
+                # 👇 key line: keep everything in one process
+                use_separate_process=False,
+            )
         )
-    )
+    except TypeError:
+        # Older versions may not have `use_separate_process`. Use env flag instead.
+        os.environ["LIVEKIT_AGENTS_DISABLE_SEPARATE_PROCESS"] = "1"
+        agents.cli.run_app(
+            agents.WorkerOptions(
+                entrypoint_fnc=lambda ctx: entrypoint(ctx, config_module),
+                initialize_process_timeout=60.0,
+                shutdown_process_timeout=60.0,
+                job_memory_warn_mb=15000,
+            )
+        )
