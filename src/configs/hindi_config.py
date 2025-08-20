@@ -8,6 +8,7 @@ def get_config():
         llm=openai.LLM(
             model="openai/gpt-4o-mini",   # 👈 note the "openai/" prefix (OpenRouter convention)
             base_url="https://openrouter.ai/api/v1",  # 👈 route through OpenRouter
+            api_key=os.getenv("OPENROUTER_API_KEY"), 
         ),
         tts=sarvam.TTS(target_language_code="hi-IN", speaker="abhilash"),
         vad=silero.VAD.load(),

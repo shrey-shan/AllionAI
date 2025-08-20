@@ -29,16 +29,24 @@ async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
     # Default comes from env for console mode; FE metadata overrides in dev mode
-    lang = os.getenv("AGENT_LANG", "en")
+    lang = os.getenv("AGENT_LANG", "en").lower()
 
     # Try to read participant metadata quickly (frontend sets it after connect)
     try:
-        participant = await ctx.wait_for_participant(timeout=3.0)
-        if participant and participant.metadata:
-            md = json.loads(participant.metadata)
-            lang = (md.get("language") or lang).lower()
+    # Wait for the first participant to join
+        participant = await ctx.wait_for_participant(timeout=8.0)
+    # Poll a few times for metadata because FE may call setMetadata() right after connect
+        if participant:
+            for _ in range(16):  # ~8s total (16 * 0.5s)
+                if participant.metadata:
+                    md = json.loads(participant.metadata)
+                    selected = (md.get("language") or lang).lower()
+                    if selected in ("en", "hi", "kn"):
+                        lang = selected
+                    break
+                await asyncio.sleep(0.5)
     except Exception:
-        pass  # stay with env/default
+        pass  # keep env/default "en"
 
     cfg = _pick_config_from_lang(lang)
 
@@ -65,7 +73,7 @@ def run_agent():
                 initialize_process_timeout=60.0,
                 shutdown_process_timeout=60.0,
                 job_memory_warn_mb=15000,
-                use_separate_process=False,
+               
             )
         )
     except TypeError:
