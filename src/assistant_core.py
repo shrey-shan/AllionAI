@@ -1,55 +1,49 @@
 # assistant_core.py
-from dotenv import load_dotenv
+# assistant_core.py (only the entrypoint function shown)
+import asyncio  # make sure this import exists at top
+import json
+import os
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
-import os, json
-
-base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
-load_dotenv(os.path.join(base_dir, ".env"))
-
-class Assistant(Agent):
-    def __init__(self) -> None:
-        super().__init__(instructions=(
-            "Friendly automotive assistant for mechanics. "
-            "Understands voice, images, text, and video to identify faults via DTCs or symptoms. "
-            "Uses trusted data, web search if needed, and guides repair step-by-step, confirming after each step. "
-            "If unrelated to automotive: I’m here to help with vehicle diagnostics and repair questions. "
-            "Could you share details about the vehicle issue or error code?"
-        ))
-
-def _pick_config_from_lang(code: str):
-    c = (code or "en").lower()
-    if c == "hi":
-        import configs.hindi_config as cfg; return cfg
-    if c == "kn":
-        import configs.kannada_config as cfg; return cfg
-    import configs.english_config as cfg; return cfg
 
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
-    # Default comes from env for console mode; FE metadata overrides in dev mode
+    # Default lang; frontend metadata can override in dev
     lang = os.getenv("AGENT_LANG", "en").lower()
 
-    # Try to read participant metadata quickly (frontend sets it after connect)
+    participant = None
     try:
-    # Wait for the first participant to join
-        participant = await ctx.wait_for_participant(timeout=8.0)
-    # Poll a few times for metadata because FE may call setMetadata() right after connect
-        if participant:
-            for _ in range(16):  # ~8s total (16 * 0.5s)
-                if participant.metadata:
-                    md = json.loads(participant.metadata)
-                    selected = (md.get("language") or lang).lower()
-                    if selected in ("en", "hi", "kn"):
-                        lang = selected
-                    break
+        # ⬅️ Correct: wrap with asyncio.wait_for (NOT ctx.wait_for)
+        participant = await asyncio.wait_for(ctx.wait_for_participant(), timeout=8.0)
+    except asyncio.TimeoutError:
+        print("[assistant_core] wait_for_participant timed out")
+        # fallback: pick first remote participant if any
+        participant = next(iter(ctx.room.remote_participants.values()), None)
+    except Exception as e:
+        print("[assistant_core] wait_for_participant error:", e)
+
+    # Poll briefly for FE post-connect setMetadata()
+    if participant:
+        print("[assistant_core] joined participant:", getattr(participant, "identity", "<unknown>"))
+        print("[assistant_core] participant.metadata (initial):", participant.metadata)
+        for _ in range(16):  # ~8s total (16 * 0.5s)
+            md_str = participant.metadata
+            if not md_str:
                 await asyncio.sleep(0.5)
-    except Exception:
-        pass  # keep env/default "en"
+                continue
+            try:
+                md = json.loads(md_str)
+                selected = (md.get("language") or lang).lower()
+                if selected in ("en", "hi", "kn"):
+                    lang = selected
+            except Exception as e:
+                print("[assistant_core] metadata parse error:", e)
+            break
+
+    print(f"[assistant_core] Using language config: {lang}")
 
     cfg = _pick_config_from_lang(lang)
-
     session = AgentSession(**cfg.get_config())
     await session.start(
         room=ctx.room,
