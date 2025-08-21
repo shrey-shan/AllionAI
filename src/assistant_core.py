@@ -6,6 +6,30 @@ import os
 from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 
+import os, json
+
+base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
+load_dotenv(os.path.join(base_dir, ".env"))
+
+class Assistant(Agent):
+    def __init__(self) -> None:
+        super().__init__(instructions=(
+            "Friendly automotive assistant for mechanics. "
+            "Understands voice, images, text, and video to identify faults via DTCs or symptoms. "
+            "Uses trusted data, web search if needed, and guides repair step-by-step, confirming after each step. "
+            "If unrelated to automotive: I’m here to help with vehicle diagnostics and repair questions. "
+            "Could you share details about the vehicle issue or error code?"
+        ))
+
+def _pick_config_from_lang(code: str):
+    c = (code or "en").lower()
+    if c == "hi":
+        import configs.hindi_config as cfg; return cfg
+    if c == "kn":
+        import configs.kannada_config as cfg; return cfg
+    import configs.english_config as cfg; return cfg
+
+
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
