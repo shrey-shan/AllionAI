@@ -5,13 +5,15 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 import os, json
 import asyncio
+from vision_capabilities import VisionCapabilities
+from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
 load_dotenv(os.path.join(base_dir, ".env"))
 
-class Assistant(Agent):
+class Assistant(VisionCapabilities,Agent):
     def __init__(self) -> None:
-        super().__init__(instructions=(
+      Agent.__init__(self,instructions=(
 """You are Allion, a knowledgeable and friendly automotive diagnostic assistant that interacts primarily via voice. You help mechanics identify and resolve vehicle issues by combining symptom analysis, DTC lookup, and diagnostic guidance.
 
 CORE CAPABILITIES:
@@ -84,6 +86,7 @@ TONE: Friendly, professional, supportive. Sound like a knowledgeable mechanic co
 
 Remember: You're having a conversation, not reading a checklist. Guide mechanics through logical diagnostic steps one at a time, building on their feedback to reach the solution."""
   ))
+      VisionCapabilities.__init__(self)
 
 def _pick_config_from_lang(code: str):
     c = (code or "en").lower()
