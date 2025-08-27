@@ -5,16 +5,23 @@ from livekit import agents
 from livekit.agents import AgentSession, Agent, RoomInputOptions
 import os, json
 import asyncio
-from vision_capabilities import VisionCapabilities
+from .vision_capabilities import VisionCapabilities
+from .rag_capabilities import RepairAssistantStateMachine
+from .configs.rag_config import RAGConfig
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
 load_dotenv(os.path.join(base_dir, ".env"))
 
 class Assistant(VisionCapabilities,Agent):
     def __init__(self) -> None:
-      Agent.__init__(self,instructions=(
-"""You are Allion, a knowledgeable and friendly automotive diagnostic assistant that interacts primarily via voice. You help mechanics identify and resolve vehicle issues by combining symptom analysis, DTC lookup, and diagnostic guidance.
+        Agent.__init__(self,instructions=(
+            """You are Allion, a knowledgeable and friendly automotive diagnostic assistant that interacts primarily via voice. You help mechanics identify and resolve vehicle issues by combining symptom analysis, DTC lookup, and diagnostic guidance.
 
 CORE CAPABILITIES:
 - Voice-first natural conversation with mechanics
@@ -31,6 +38,10 @@ CRITICAL SPEAKING RULES:
 - Sound like an experienced shop colleague, not a manual
 
 DIAGNOSTIC APPROACH:
+You have access to two tools: `search_documents` and `search_web`.
+ALWAYS prioritize `search_documents` first to check your internal knowledge base of PDFs.
+ONLY use `search_web` if `search_documents` returns no relevant information or indicates that local search is unavailable.
+
 When given a DTC code (e.g., P0420):
 - State: "I found error code P0420, which indicates [brief description]"  
 - Explain: "The most common cause is [primary cause]"
@@ -47,7 +58,7 @@ When no database match found:
 
 CONVERSATION FLOW:
 1. Listen to mechanic's description
-2. Ask ONE clarifying question if needed
+2. Use your tools (`search_documents` first, then `search_web`) to find information.
 3. Suggest the MOST LIKELY cause (not multiple options)
 4. Guide through ONE specific test or check
 5. Wait for their results before suggesting next step
@@ -85,16 +96,51 @@ WHEN INFORMATION IS MISSING:
 TONE: Friendly, professional, supportive. Sound like a knowledgeable mechanic colleague who's there to help solve the problem together.
 
 Remember: You're having a conversation, not reading a checklist. Guide mechanics through logical diagnostic steps one at a time, building on their feedback to reach the solution."""
-  ))
-      VisionCapabilities.__init__(self)
+        ))
+        VisionCapabilities.__init__(self)
+        # Initialize RAG Manager
+        self.rag_config = RAGConfig()
+        self.rag_enabled = getattr(self.rag_config, 'RAG_ENABLED', True)
+        
+        if self.rag_enabled:
+            # Use the fixed RepairAssistantStateMachine as your RAG manager
+            self.rag_manager = RepairAssistantStateMachine(self.rag_config)
+            logger.info("RAG Manager initialized successfully")
+        else:
+            self.rag_manager = None
+            logger.info("RAG disabled in configuration")
+
+    @property
+    def tools(self):
+        """Expose RAG tools to the LLM."""
+        if self.rag_enabled and self.rag_manager:
+            return self.rag_manager.available_tools
+        return []
+
+    async def get_system_status(self) -> dict:
+        """Return system-level status for debugging and integration testing."""
+        rag_health = {"status": "disabled", "initialized": False}
+        
+        if self.rag_enabled and self.rag_manager:
+            # The RAG manager now has get_health() method directly
+            rag_health = self.rag_manager.get_health()
+        
+        status = {
+            "status": "ok",
+            "assistant_ready": True,
+            "rag_enabled": self.rag_enabled,
+            "rag_health": rag_health,
+            "rag_initialized": rag_health.get("initialized", False),
+        }
+        return status
 
 def _pick_config_from_lang(code: str):
     c = (code or "en").lower()
     if c == "hi":
-        import configs.hindi_config as cfg; return cfg
+        from .configs import hindi_config as cfg; return cfg
     if c == "kn":
-        import configs.kannada_config as cfg; return cfg
-    import configs.english_config as cfg; return cfg
+        from .configs import kannada_config as cfg; return cfg
+    from .configs import english_config as cfg; return cfg
 
 #async def entrypoint(ctx: agents.JobContext):
 #    await ctx.connect()
@@ -128,76 +174,85 @@ def _pick_config_from_lang(code: str):
  #   await session.generate_reply(instructions=greetings.get(lang, greetings["en"]))
 
 
+
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
-    # default if nothing arrives
-    lang_box = {"value": os.getenv("AGENT_LANG", "en").lower()}
-    got_lang = asyncio.Event()
+    # For console mode, language is passed directly via env var.
+    # For dev mode, we need to detect it from participant metadata.
+    mode = os.getenv("AGENT_MODE", "dev")
 
-    # helper to try parse a language from a participant
-    def _try_set_lang_from_participant(p):
-        try:
-            if p and p.metadata:
-                md = json.loads(p.metadata)
-                sel = (md.get("language") or lang_box["value"]).lower()
-                if sel in ("en", "hi", "kn"):
-                    if sel != lang_box["value"]:
-                        print("[assistant_core] language from token metadata:", sel)
-                    lang_box["value"] = sel
-                    got_lang.set()
-                    return True
-        except Exception as e:
-            print("[assistant_core] metadata parse error:", e)
-        return False
+    if mode == "console":
+        lang = os.getenv("AGENT_LANG", "en").lower()
+    else:  # dev mode
+        # default if nothing arrives
+        lang_box = {"value": os.getenv("AGENT_LANG", "en").lower()}
+        got_lang = asyncio.Event()
 
-    # 1) If someone is already in the room, check them immediately
-    for p in ctx.room.remote_participants.values():
-        print("[assistant_core] found existing participant:", getattr(p, "identity", "<unknown>"))
-        print("[assistant_core] existing participant.metadata:", p.metadata)
-        if _try_set_lang_from_participant(p):
-            break
+        # helper to try parse a language from a participant
+        def _try_set_lang_from_participant(p):
+            try:
+                if p and p.metadata:
+                    md = json.loads(p.metadata)
+                    sel = (md.get("language") or lang_box["value"]).lower()
+                    if sel in ("en", "hi", "kn"):
+                        if sel != lang_box["value"]:
+                            print("[assistant_core] language from token metadata:", sel)
+                        lang_box["value"] = sel
+                        got_lang.set()
+                        return True
+            except Exception as e:
+                print("[assistant_core] metadata parse error:", e)
+            return False
 
-        # also listen for late metadata updates on this participant
-        @p.on("metadata_changed")
-        def _on_meta_changed():
-            print("[assistant_core] participant.metadata_changed:", p.metadata)
-            _try_set_lang_from_participant(p)
+        # 1) If someone is already in the room, check them immediately
+        for p in ctx.room.remote_participants.values():
+            print("[assistant_core] found existing participant:", getattr(p, "identity", "<unknown>"))
+            print("[assistant_core] existing participant.metadata:", p.metadata)
+            if _try_set_lang_from_participant(p):
+                break
 
-    # 2) Listen for new participant joins
-    @ctx.room.on("participant_connected")
-    def _on_participant_connected(p):
-        print("[assistant_core] participant_connected:", getattr(p, "identity", "<unknown>"))
-        print("[assistant_core] connected participant.metadata:", p.metadata)
-        if not _try_set_lang_from_participant(p):
-            # watch for later metadata changes
+            # also listen for late metadata updates on this participant
             @p.on("metadata_changed")
             def _on_meta_changed():
                 print("[assistant_core] participant.metadata_changed:", p.metadata)
                 _try_set_lang_from_participant(p)
 
-    # 3) Data-message fallback (FE sends after connect)
-    @ctx.room.on("data_received")
-    def _on_data(pkt):
+        # 2) Listen for new participant joins
+        @ctx.room.on("participant_connected")
+        def _on_participant_connected(p):
+            print("[assistant_core] participant_connected:", getattr(p, "identity", "<unknown>"))
+            print("[assistant_core] connected participant.metadata:", p.metadata)
+            if not _try_set_lang_from_participant(p):
+                # watch for later metadata changes
+                @p.on("metadata_changed")
+                def _on_meta_changed():
+                    print("[assistant_core] participant.metadata_changed:", p.metadata)
+                    _try_set_lang_from_participant(p)
+
+        # 3) Data-message fallback (FE sends after connect)
+        @ctx.room.on("data_received")
+        def _on_data(pkt):
+            try:
+                if getattr(pkt, "topic", None) == "config":
+                    payload = json.loads(bytes(pkt.data).decode())
+                    sel = (payload.get("language") or lang_box["value"]).lower()
+                    if sel in ("en", "hi", "kn"):
+                        if sel != lang_box["value"]:
+                            print("[assistant_core] language from data message:", sel)
+                        lang_box["value"] = sel
+                        got_lang.set()
+            except Exception as e:
+                print("[assistant_core] data parse error:", e)
+
+        # Wait up to 8s for any of the above to set the language
         try:
-            if getattr(pkt, "topic", None) == "config":
-                payload = json.loads(bytes(pkt.data).decode())
-                sel = (payload.get("language") or lang_box["value"]).lower()
-                if sel in ("en", "hi", "kn"):
-                    if sel != lang_box["value"]:
-                        print("[assistant_core] language from data message:", sel)
-                    lang_box["value"] = sel
-                    got_lang.set()
-        except Exception as e:
-            print("[assistant_core] data parse error:", e)
+            await asyncio.wait_for(got_lang.wait(), timeout=8.0)
+        except asyncio.TimeoutError:
+            print("[assistant_core] no language override received in time; using default")
 
-    # Wait up to 8s for any of the above to set the language
-    try:
-        await asyncio.wait_for(got_lang.wait(), timeout=8.0)
-    except asyncio.TimeoutError:
-        print("[assistant_core] no language override received in time; using default")
+        lang = lang_box["value"]
 
-    lang = lang_box["value"]
     print(f"[assistant_core] Using language config: {lang}")
 
     cfg = _pick_config_from_lang(lang)

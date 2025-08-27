@@ -7,11 +7,12 @@ multiprocessing.set_start_method("spawn", force=True)
 from livekit.plugins import openai as _openai  # noqa: F401
 from livekit.plugins import cartesia as _cartesia  # noqa: F401
 from livekit.plugins import deepgram as _deepgram  # noqa: F401
+from livekit.plugins import google as _google  # noqa: F401
 from livekit.plugins import silero as _silero  # noqa: F401
 from livekit.plugins import sarvam as _sarvam  # noqa: F401
 from livekit.plugins.turn_detector import multilingual as _turn_multilingual  # noqa: F401
 
-from assistant_core import run_agent  # run_agent() chooses config based on env/metadata  :contentReference[oaicite:2]{index=2}
+from .assistant_core import run_agent  # run_agent() chooses config based on env/metadata
 
 LANG_ALIASES = {
   "en": "en", "english": "en",

@@ -5,6 +5,21 @@ This project runs a LiveKit-based voice agent in two modes:
 - **Console Mode** → Local testing in your terminal  
 - **Dev/Web Mode** → Connect to the hosted frontend: [AllionAI Web App](https://agent-starter-react-sigma.vercel.app/)
 
+
+AllionAI/
+├── docs/pdf_source/
+├── src/
+│   ├── configs/
+│   │   ├── __init__.py
+│   │   └── rag_config.py
+│   ├── assistant_core.py
+│   ├── rag_capabilities.py
+│   └── vision_capabilities.py
+├── scripts/
+│   ├── setup_rag.py
+│   └── test_rag.py
+└── requirements.txt
+└── requirements_rag.txt
 ---
 
 ## 1. Clone the Repository
@@ -32,6 +47,7 @@ source allion/bin/activate
 ## 3. Install Dependencies
 ```bash
 pip install -r requirements.txt
+pip install -r requirements_rag.txt
 ```
 
 ---
@@ -56,16 +72,26 @@ OPENAI_BASE_URL=<base_url_if_using_openrouter>
 
 ---
 
-## 5. Download Required Files
+## 5. Setup RAG Vector Store (One-Time)
+If you plan to use the RAG (Retrieval-Augmented Generation) capabilities with your own PDF documents, run this script once to process them and create the local vector database.
+
 ```bash
-python src/<voice_agent_file>.py download-files
+python scripts/setup_rag.py
+```
+- Place your PDF files in the `docs/pdf_source/` directory before running.
+
+---
+
+## 6. Download Required Files
+```bash
+python src/multilingual_agent.py download-files
 ```
 
 ---
 
 ## 6. Run in Console Mode (Local Testing)
 ```bash
-python src/<voice_agent_file>.py console
+python -m src.multilingual_agent en console
 ```
 - Use your microphone to talk to the agent in the terminal.  
 - Ideal for quick debugging and testing.
@@ -78,6 +104,5 @@ python src/voice_agent.py dev
 ```
 - Starts the LiveKit agent worker and joins the specified room.  
 - Go to the frontend web app:  
-  👉Default : [https://agent-starter-react-sigma.vercel.app/](https://agent-starter-react-sigma.vercel.app/)
-  👉Custom(with bosch logo)  : [https://agent-starter-react-custom.vercel.app/](http://agent-starter-react-custom.vercel.app/)
+  👉Custom  : [https://agent-starter-react-custom.vercel.app/](http://agent-starter-react-custom.vercel.app/)
 - Enter the same room name as in `.env` (`LIVEKIT_ROOM`) to interact with your agent via browser.

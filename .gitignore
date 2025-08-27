@@ -1,1 +1,4 @@
 allion/
+src/__pycache__/
+src/configs/__pycache__/
+vectorstore_multi_pdf/
