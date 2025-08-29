@@ -89,7 +89,7 @@ python -m src.multilingual_agent download-files
 
 ---
 
-## 6. Run in Console Mode (Local Testing)
+## 7a. Run in Console Mode (Local Testing)
 ```bash
 python -m src.multilingual_agent en console
 ```
@@ -98,7 +98,7 @@ python -m src.multilingual_agent en console
 
 ---
 
-## 7. Run in Dev Mode (Connect to Web App)
+## 7b. Run in Dev Mode (Connect to Web App)
 ```bash
 python -m src.multilingual_agent dev
 ```
@@ -106,3 +106,35 @@ python -m src.multilingual_agent dev
 - Go to the frontend web app:  
   👉Custom  : [https://agent-starter-react-custom.vercel.app/](http://agent-starter-react-custom.vercel.app/)
 - Enter the same room name as in `.env` (`LIVEKIT_ROOM`) to interact with your agent via browser.
+
+---
+
+## 8. Troubleshooting
+
+### RAG Hallucinations or Stale Data
+
+The Retrieval-Augmented Generation (RAG) system relies on a local vector database (ChromaDB) located in the `vectorstore_multi_pdf` directory. This database stores indexed data from your PDF documents.
+
+**Problem:**
+
+You might encounter a situation where the RAG system provides answers that are not present in your source documents (a "hallucination") or reflects outdated information. This can happen if:
+1.  The vector database contains stale data from previously indexed documents that are no longer in `docs/pdf_source/`.
+2.  The retrieval system is finding irrelevant chunks of text that are still close enough in the vector space to be selected, causing the AI model to ignore the context and answer from its general knowledge.
+
+**Solution:**
+
+The most reliable solution is to completely remove the existing vector database and let the system rebuild it from scratch. This ensures the RAG system is using only the most current documents in your `docs/pdf_source/` directory.
+
+**To clear the vector store, run the appropriate command for your operating system in the project root directory:**
+
+**Windows (Command Prompt or PowerShell)**
+```bash
+rmdir /s /q vectorstore_multi_pdf
+```
+
+**macOS / Linux**
+```bash
+rm -rf vectorstore_multi_pdf
+```
+
+After deleting the directory, the RAG system will automatically re-create and re-index it the next time it is initialized (e.g., by running `scripts/setup_rag.py` or by starting the main application).
