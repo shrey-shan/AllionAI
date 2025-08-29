@@ -5,7 +5,7 @@ This project runs a LiveKit-based voice agent in two modes:
 - **Console Mode** → Local testing in your terminal  
 - **Dev/Web Mode** → Connect to the hosted frontend: [AllionAI Web App](https://agent-starter-react-sigma.vercel.app/)
 
-
+```bash
 AllionAI/
 ├── docs/pdf_source/
 ├── src/
@@ -20,6 +20,7 @@ AllionAI/
 │   └── test_rag.py
 └── requirements.txt
 └── requirements_rag.txt
+```
 ---
 
 ## 1. Clone the Repository
@@ -67,7 +68,6 @@ AGENT_ID=agent1
 
 # Model Provider
 OPENAI_API_KEY=<your_openai_or_openrouter_key>
-OPENAI_BASE_URL=<base_url_if_using_openrouter>
 ```
 
 ---
@@ -84,7 +84,7 @@ python scripts/setup_rag.py
 
 ## 6. Download Required Files
 ```bash
-python src/multilingual_agent.py download-files
+python -m src.multilingual_agent download-files
 ```
 
 ---
@@ -100,7 +100,7 @@ python -m src.multilingual_agent en console
 
 ## 7. Run in Dev Mode (Connect to Web App)
 ```bash
-python src/voice_agent.py dev
+python -m src.multilingual_agent dev
 ```
 - Starts the LiveKit agent worker and joins the specified room.  
 - Go to the frontend web app:  
