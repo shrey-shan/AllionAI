@@ -7,6 +7,7 @@ import os, json
 import asyncio
 from vision_capabilities import VisionCapabilities
 from livekit.plugins.turn_detector.multilingual import MultilingualModel
+import logging
 
 base_dir = os.path.dirname(os.path.dirname(__file__))  # goes one level up from /src
 load_dotenv(os.path.join(base_dir, ".env"))
@@ -88,7 +89,7 @@ Remember: You're having a conversation, not reading a checklist. Guide mechanics
   ))
       VisionCapabilities.__init__(self)
 
-def _pick_config_from_lang(code: str):
+def _pick_config_from_lang(code: str, voice_base: str):
     c = (code or "en").lower()
     if c == "hi":
         import configs.hindi_config as cfg; return cfg
@@ -131,77 +132,82 @@ def _pick_config_from_lang(code: str):
 async def entrypoint(ctx: agents.JobContext):
     await ctx.connect()
 
-    # default if nothing arrives
-    lang_box = {"value": os.getenv("AGENT_LANG", "en").lower()}
-    got_lang = asyncio.Event()
+    mode = os.getenv("AGENT_MODE", "dev")
+    cfg_box = {
+        "language": os.getenv("AGENT_LANG", "en").lower(),
+        "voiceBase": os.getenv("AGENT_VOICEBASE", "Voice Assistant")
+    }
+    got_config = asyncio.Event()
 
-    # helper to try parse a language from a participant
-    def _try_set_lang_from_participant(p):
+    def _try_set_from_metadata(md: str):
         try:
-            if p and p.metadata:
-                md = json.loads(p.metadata)
-                sel = (md.get("language") or lang_box["value"]).lower()
-                if sel in ("en", "hi", "kn"):
-                    if sel != lang_box["value"]:
-                        print("[assistant_core] language from token metadata:", sel)
-                    lang_box["value"] = sel
-                    got_lang.set()
-                    return True
+            if md:
+                payload = json.loads(md)
+                if "language" in payload and payload["language"] in ("en", "hi", "kn"):
+                    if payload["language"] != cfg_box["language"]:
+                        print("[assistant_core] language override:", payload["language"])
+                    cfg_box["language"] = payload["language"]
+                    got_config.set()
+                if "voiceBase" in payload and payload["voiceBase"] in ("Voice Assistant", "Live Assistant"):
+                    cfg_box["voiceBase"] = payload["voiceBase"]
+                    got_config.set()
+                    print("[assistant_core] voiceBase override:", payload["voiceBase"])
         except Exception as e:
             print("[assistant_core] metadata parse error:", e)
-        return False
 
-    # 1) If someone is already in the room, check them immediately
+    # ✅ Check room metadata first (room-wide config)
+    if ctx.room.metadata:
+        print("[assistant_core] room.metadata:", ctx.room.metadata)
+        _try_set_from_metadata(ctx.room.metadata)
+
+    # ✅ Check existing participants
     for p in ctx.room.remote_participants.values():
-        print("[assistant_core] found existing participant:", getattr(p, "identity", "<unknown>"))
-        print("[assistant_core] existing participant.metadata:", p.metadata)
-        if _try_set_lang_from_participant(p):
-            break
+        print("[assistant_core] found participant:", getattr(p, "identity", "<unknown>"))
+        print("[assistant_core] existing participant.metadata:", getattr(p, "metadata", None))
+        _try_set_from_metadata(getattr(p, "metadata", None))
 
-        # also listen for late metadata updates on this participant
-        @p.on("metadata_changed")
-        def _on_meta_changed():
-            print("[assistant_core] participant.metadata_changed:", p.metadata)
-            _try_set_lang_from_participant(p)
-
-    # 2) Listen for new participant joins
-    @ctx.room.on("participant_connected")
-    def _on_participant_connected(p):
-        print("[assistant_core] participant_connected:", getattr(p, "identity", "<unknown>"))
-        print("[assistant_core] connected participant.metadata:", p.metadata)
-        if not _try_set_lang_from_participant(p):
-            # watch for later metadata changes
+        # ✅ only attach listener if it's a real Participant, not a MagicMock
+        if hasattr(p, "on"):
             @p.on("metadata_changed")
             def _on_meta_changed():
                 print("[assistant_core] participant.metadata_changed:", p.metadata)
-                _try_set_lang_from_participant(p)
+                _try_set_from_metadata(p.metadata)
 
-    # 3) Data-message fallback (FE sends after connect)
+    # ✅ Listen for new participants
+    @ctx.room.on("participant_connected")
+    def _on_participant_connected(p):
+        print("[assistant_core] participant_connected:", getattr(p, "identity", "<unknown>"))
+        _try_set_from_metadata(getattr(p, "metadata", None))
+
+        if hasattr(p, "on"):
+            @p.on("metadata_changed")
+            def _on_meta_changed():
+                print("[assistant_core] participant.metadata_changed:", p.metadata)
+                _try_set_from_metadata(p.metadata)
+
+    # ✅ Data message fallback (frontend can send config after join)
     @ctx.room.on("data_received")
     def _on_data(pkt):
         try:
             if getattr(pkt, "topic", None) == "config":
                 payload = json.loads(bytes(pkt.data).decode())
-                sel = (payload.get("language") or lang_box["value"]).lower()
-                if sel in ("en", "hi", "kn"):
-                    if sel != lang_box["value"]:
-                        print("[assistant_core] language from data message:", sel)
-                    lang_box["value"] = sel
-                    got_lang.set()
+                _try_set_from_metadata(json.dumps(payload))
         except Exception as e:
             print("[assistant_core] data parse error:", e)
 
-    # Wait up to 8s for any of the above to set the language
+    # Wait for up to 8s for any config override
     try:
-        await asyncio.wait_for(got_lang.wait(), timeout=8.0)
+        await asyncio.wait_for(got_config.wait(), timeout=8.0)
     except asyncio.TimeoutError:
-        print("[assistant_core] no language override received in time; using default")
+        print("[assistant_core] no config override received; using defaults")
 
-    lang = lang_box["value"]
-    print(f"[assistant_core] Using language config: {lang}")
+    lang = cfg_box["language"]
+    voice_base = cfg_box["voiceBase"]
 
-    cfg = _pick_config_from_lang(lang)
-    session = AgentSession(**cfg.get_config())
+    print(f"[assistant_core] Using config: language={lang}, voiceBase={voice_base}")
+
+    cfg = _pick_config_from_lang(lang,voice_base)
+    session = AgentSession(**cfg.get_config(voice_base))
     await session.start(
         room=ctx.room,
         agent=Assistant(),
